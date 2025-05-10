@@ -33,6 +33,7 @@ function logoutUser() {
 function getUserStorageKey(baseKey) {
     const username = getCurrentUsername();
     if (!username) {
+        console.warn("getUserStorageKey: User not logged in, returning null.");
         return null;
     }
     const sanitizedUsername = username.replace(/[^a-zA-Z0-9_.-@]/g, '');
@@ -40,7 +41,10 @@ function getUserStorageKey(baseKey) {
 }
 
 function getStorageItem(key, defaultValue = {}) {
-    if (!key) return defaultValue;
+    if (!key) {
+        console.warn("getStorageItem: Key is null/undefined, returning defaultValue.");
+        return defaultValue;
+    }
     try {
         const item = localStorage.getItem(key);
         return item ? JSON.parse(item) : defaultValue;
@@ -58,6 +62,7 @@ function setStorageItem(key, value) {
     }
     try {
         localStorage.setItem(key, JSON.stringify(value));
+        // console.log(`Set localStorage key "${key}" successfully.`); // Optional: for verbose logging
         return true;
     } catch (e) {
         console.error(`Error setting localStorage key “${key}”. Data may not save.`, e);
@@ -68,22 +73,23 @@ function setStorageItem(key, value) {
 
 function getUserData(baseKey, defaultValue = {}) {
     const userKey = getUserStorageKey(baseKey);
+    // console.log(`[getUserData] For baseKey "${baseKey}", generated userKey: "${userKey}"`); // Optional: for verbose logging
     return getStorageItem(userKey, defaultValue);
 }
 
 function setUserData(baseKey, value) {
     const userKey = getUserStorageKey(baseKey);
     if (!userKey) {
-        console.error(`Error saving user data (${baseKey}): User not logged in or key generation failed.`);
+        console.error(`Error saving user data for baseKey ("${baseKey}"): User not logged in or key generation failed.`);
         return false;
     }
+    // console.log(`[setUserData] For baseKey "${baseKey}", generated userKey: "${userKey}"`); // Optional: for verbose logging
     return setStorageItem(userKey, value);
 }
 
 const BASE_STORAGE_KEYS = {
     USER_SUBJECTS: 'paperBuddyUserSubjects',
     PAPER_STATUSES: 'paperBuddyPaperStatuses',
-    // ATTEMPT_DURATIONS is now part of the full attempt detail object
     ATTEMPT_DETAILS_PREFIX: 'attemptDetail_',
 };
 
@@ -228,12 +234,13 @@ async function getAiFeedbackAndGrade(paperContext, userAnswer, paperTotalMarks =
             const errorData = await response.json().catch(() => ({ message: `Server error: ${response.statusText}` }));
             console.error("[FRONTEND_AI] Backend AI Feedback API Error:", response.status, errorData);
             displayUserMessage(`AI feedback failed: ${errorData.message || 'Server error'}`, "error");
+            // Ensure a consistent error structure is returned
             return Promise.resolve({ score: 0, totalMarks: paperTotalMarks, grade: "U", feedback: `AI Error from backend: ${errorData.message || response.statusText}`, outline: "Outline error.", highlight_references: [], sectionScores: {} });
         }
         const parsedResponse = await response.json();
         console.log("[FRONTEND_AI] AI Feedback Response from backend:", parsedResponse);
         const defaults = { score: 0, totalMarks: paperTotalMarks, grade: "U", feedback: "No feedback provided.", outline: "No outline provided.", highlight_references: [], sectionScores: {} };
-        const result = { ...defaults, ...parsedResponse };
+        const result = { ...defaults, ...parsedResponse }; // Merge with defaults
         result.score = parseInt(result.score) || 0;
         result.totalMarks = parseInt(result.totalMarks) || paperTotalMarks;
         if (result.score > result.totalMarks) result.score = result.totalMarks;
@@ -459,6 +466,7 @@ function setupLoginModal() {
     let currentAuthMode = 'login';
     function setAuthMode(mode) {
         currentAuthMode = mode;
+        loginModal._currentAuthMode = mode; // Store on modal for triggerLoginModal access
         tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.formMode === mode));
         if (mode === 'login') {
             modalTitle.textContent = "Log In";
@@ -500,9 +508,11 @@ function setupLoginModal() {
         const name = nameInput ? nameInput.value.trim() : '';
         const email = emailInput.value.trim();
         const password = passwordInput.value;
-        console.log(`Auth attempt in mode: ${currentAuthMode}`);
+        const formAuthMode = loginModal._currentAuthMode || 'login'; // Use mode from modal
+        console.log(`Auth attempt in mode: ${formAuthMode}`);
         console.log("Name:", name, "Email:", email, "Password entered:", password ? "Yes" : "No");
-        if (currentAuthMode === 'register' && !name) {
+
+        if (formAuthMode === 'register' && !name) {
             errorMessage.textContent = "Name is required for sign up."; errorMessage.hidden = false; if (nameInput) nameInput.focus(); return;
         }
         if (!email) {
@@ -515,11 +525,11 @@ function setupLoginModal() {
             errorMessage.textContent = "Password must be at least 6 characters."; errorMessage.hidden = false; passwordInput.focus(); return;
         }
         submitButton.disabled = true; submitButton.textContent = "Processing...";
-        displayUserMessage(`Attempting to ${currentAuthMode === 'login' ? 'log in' : 'sign up'} (demo)...`, "info");
+        displayUserMessage(`Attempting to ${formAuthMode === 'login' ? 'log in' : 'sign up'} (demo)...`, "info");
         setTimeout(() => {
             let success = false;
             // SIMULATED AUTH - In real app, call backend /auth/login or /auth/register
-            if (currentAuthMode === 'login') {
+            if (formAuthMode === 'login') {
                 success = loginUser(email);
             } else { // register
                 success = loginUser(email); // For demo, registration is same as login
@@ -538,54 +548,65 @@ function setupLoginModal() {
                     window.location.reload();
                 }
             } else {
-                errorMessage.textContent = `${currentAuthMode === 'login' ? 'Login' : 'Sign up'} failed (mock). Please try again.`;
+                errorMessage.textContent = `${formAuthMode === 'login' ? 'Login' : 'Sign up'} failed (mock). Please try again.`;
                 errorMessage.hidden = false; emailInput.focus();
             }
-             setAuthMode('login');
+             setAuthMode('login'); // Reset to login tab for next time, or keep current? For now, reset.
         }, 750);
     });
-    setAuthMode('login');
+    setAuthMode('login'); // Initialize to login mode
 }
 function triggerLoginModal(event, triggerElement) {
     console.log("Login/Signup required. Triggered by:", triggerElement || event?.currentTarget);
     if (event) event.preventDefault();
     const loginModal = document.getElementById('login-modal');
     const emailInput = document.getElementById('login-email');
+    const nameInput = document.getElementById('login-name'); // For focusing
     const loginForm = document.getElementById('login-form');
     const errorMessage = document.getElementById('login-error-message');
+
     if (!loginModal || !emailInput || !loginForm || !errorMessage) {
          console.error("Login modal or its inner elements not found!");
          displayUserMessage("Login component error. Please refresh the page.", "error"); return;
     }
     loginForm.reset(); errorMessage.hidden = true;
-    if (triggerElement && triggerElement.id === 'join-trigger-btn') {
-        const signUpTab = loginModal.querySelector('.modal-tab-button[data-form-mode="register"]');
-        if (signUpTab) {
-            const nameInput = document.getElementById('login-name');
-            loginModal.querySelector('.modal-tab-button[data-form-mode="login"]').classList.remove('active');
-            signUpTab.classList.add('active');
-            loginModal.querySelector('#login-modal-title').textContent = "Sign Up";
-            loginModal.querySelector('#auth-submit-button').textContent = "Sign Up";
-            loginModal.querySelector('#name-form-group').style.display = '';
-            loginModal.querySelector('#auth-mode-message').textContent = "Already have an account? Switch to Log In.";
-            loginModal._currentAuthMode = 'register';
-            if (nameInput) nameInput.focus(); else emailInput.focus();
-        }
-    } else {
-        const loginTab = loginModal.querySelector('.modal-tab-button[data-form-mode="login"]');
-        if (loginTab) {
-            loginModal.querySelector('.modal-tab-button[data-form-mode="register"]').classList.remove('active');
-            loginTab.classList.add('active');
-            loginModal.querySelector('#login-modal-title').textContent = "Log In";
-            loginModal.querySelector('#auth-submit-button').textContent = "Log In";
-            loginModal.querySelector('#name-form-group').style.display = 'none';
-            loginModal.querySelector('#auth-mode-message').textContent = "New to PaperBuddy? Switch to Sign Up.";
-            loginModal._currentAuthMode = 'login';
-            emailInput.focus();
-        }
+
+    const loginTab = loginModal.querySelector('.modal-tab-button[data-form-mode="login"]');
+    const registerTab = loginModal.querySelector('.modal-tab-button[data-form-mode="register"]');
+    const modalTitle = loginModal.querySelector('#login-modal-title');
+    const submitButton = loginModal.querySelector('#auth-submit-button'); // Assuming this is the ID of submit button
+    const nameFormGroup = loginModal.querySelector('#name-form-group');
+    const authModeMessage = loginModal.querySelector('#auth-mode-message');
+
+    if (!loginTab || !registerTab || !modalTitle || !submitButton || !nameFormGroup || !authModeMessage) {
+        console.error("One or more critical UI elements for login modal tabs not found.");
+        return;
     }
+    
+    let focusTargetInput = emailInput;
+
+    if (triggerElement && triggerElement.id === 'join-trigger-btn') {
+        loginTab.classList.remove('active');
+        registerTab.classList.add('active');
+        modalTitle.textContent = "Sign Up";
+        submitButton.textContent = "Sign Up";
+        nameFormGroup.style.display = '';
+        authModeMessage.textContent = "Already have an account? Switch to Log In.";
+        loginModal._currentAuthMode = 'register';
+        if (nameInput) focusTargetInput = nameInput;
+    } else {
+        registerTab.classList.remove('active');
+        loginTab.classList.add('active');
+        modalTitle.textContent = "Log In";
+        submitButton.textContent = "Log In";
+        nameFormGroup.style.display = 'none';
+        authModeMessage.textContent = "New to PaperBuddy? Switch to Sign Up.";
+        loginModal._currentAuthMode = 'login';
+        focusTargetInput = emailInput;
+    }
+
     const focusRestoreTarget = triggerElement || event?.currentTarget || document.body;
-    const elementThatWasFocused = openModal(loginModal, emailInput);
+    const elementThatWasFocused = openModal(loginModal, focusTargetInput);
     loginModal._focusRestoreElement = focusRestoreTarget || elementThatWasFocused;
 }
 function setupLoginRequiredChecks() {
@@ -593,19 +614,31 @@ function setupLoginRequiredChecks() {
     if (!loginModal) { console.warn("Login modal not found, cannot set up login required checks."); return; }
     const requiresLoginSelectors = [
         '.nav__list a[href="dashboard.html"]', '.nav__list a[href="papers.html"]',
-        '.hero__search-button', '.hero__search-form',
+        '.hero__search-button', // This is likely a button inside the form
+        '.hero__search-form', // The form itself
         '.subjects__item', '.cta__container a.button',
     ];
     document.querySelectorAll(requiresLoginSelectors.join(', ')).forEach(element => {
-        const newElement = element.cloneNode(true); element.parentNode.replaceChild(newElement, element);
+        // Element might have been replaced by cloneNode, re-fetch if event listeners are not working
+        const freshElement = document.getElementById(element.id) || element; // If it has an ID
+        
         const handler = (event) => {
             if (!isUserLoggedIn()) {
-                const trigger = (newElement.tagName === 'FORM') ? newElement.querySelector('button[type="submit"], input[type="submit"]') : event.currentTarget;
-                triggerLoginModal(event, trigger || newElement);
+                 // For forms, prevent default submission. For links/buttons, prevent navigation/default action.
+                event.preventDefault();
+                const trigger = (freshElement.tagName === 'FORM') ? freshElement.querySelector('button[type="submit"], input[type="submit"]') : event.currentTarget;
+                triggerLoginModal(event, trigger || freshElement);
             }
+            // If user is logged in, the default action (form submit, link navigation) will proceed
         };
-        if (newElement.tagName === 'FORM') newElement.addEventListener('submit', handler);
-        else if (newElement.tagName === 'A' || newElement.tagName === 'BUTTON') newElement.addEventListener('click', handler);
+
+        if (freshElement.tagName === 'FORM') {
+            // For forms, we want to intercept the submit event
+            freshElement.addEventListener('submit', handler);
+        } else {
+            // For links and buttons, intercept the click event
+            freshElement.addEventListener('click', handler);
+        }
     });
 }
 
@@ -620,6 +653,7 @@ function setupDashboardPage() {
     const subjectsListWrapper = document.getElementById('subjects-list-wrapper');
     const noSubjectsMessage = document.getElementById('no-subjects-message');
     const welcomeTitle = document.querySelector('.welcome__title');
+
     if (!modal || !openModalBtn || !closeModalElements || !subjectForm || !subjectsListWrapper || !noSubjectsMessage || !welcomeTitle) {
         console.warn("Dashboard page missing essential elements. Aborting setup.");
         if(subjectsListWrapper) subjectsListWrapper.innerHTML = '<p class="no-results-message">Error loading dashboard components.</p>';
@@ -629,6 +663,8 @@ function setupDashboardPage() {
     let previouslyFocusedElementDash = null;
     let currentUserSubjects = getUserData(BASE_STORAGE_KEYS.USER_SUBJECTS, []);
     const paperStatuses = getUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, {});
+    console.log("[Dashboard] Loaded paperStatuses:", JSON.parse(JSON.stringify(paperStatuses))); // Log a deep copy for inspection
+
     function calculateSubjectStats(subjectId) {
         if (typeof ALL_PAPER_DATA_SOURCE === 'undefined' || !Array.isArray(ALL_PAPER_DATA_SOURCE)) return { progress: 0, grade: 'N/A' };
         const subjectPapers = ALL_PAPER_DATA_SOURCE.filter(p => p.subjectId === subjectId);
@@ -655,7 +691,7 @@ function setupDashboardPage() {
         const progressBarInner = document.createElement('div'); progressBarInner.className = 'progress-bar__inner'; progressBarInner.style.width = `${stats.progress}%`; progressBarInner.role = 'progressbar'; progressBarInner.ariaValueNow = stats.progress; progressBarInner.ariaValueMin = '0'; progressBarInner.ariaValueMax = '100'; progressBar.appendChild(progressBarInner); papersCell.appendChild(progressBar);
         const gradeCell = document.createElement('div'); gradeCell.className = 'subjects-list__cell'; gradeCell.dataset.label = 'Predicted grade'; gradeCell.textContent = stats.grade;
         const actionCell = document.createElement('div'); actionCell.className = 'subjects-list__cell subjects-list__cell--action';
-        const link = document.createElement('a'); link.href = `papers.html?subject=${subjectData.id}`; link.className = 'subjects-list__link'; link.setAttribute('aria-label', `View ${subjectLabel} papers`); link.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`; actionCell.appendChild(link); article.append(subjectCell, papersCell, gradeCell, actionCell); return article;
+        const link = document.createElement('a'); link.href = `papers.html?subject=${encodeURIComponent(subjectData.id)}`; link.className = 'subjects-list__link'; link.setAttribute('aria-label', `View ${subjectLabel} papers`); link.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`; actionCell.appendChild(link); article.append(subjectCell, papersCell, gradeCell, actionCell); return article;
     };
     const renderSubjectsList = (subjectsDataToRender) => {
         const items = subjectsListWrapper.querySelectorAll('.subjects-list__item'); items.forEach(item => item.remove());
@@ -687,6 +723,8 @@ function setupDashboardPage() {
         if (success) {
             currentUserSubjects = newSubjectsData; renderSubjectsList(currentUserSubjects);
             displayUserMessage("Subject preferences saved.", "success");
+        } else {
+            displayUserMessage("Failed to save subject preferences.", "error");
         }
         closeSubjectModalInstance();
     });
@@ -701,6 +739,7 @@ function setupPapersPage_Dynamic() {
     const filterForm = document.getElementById('paper-filter-form');
     const applyFiltersBtn = document.getElementById('apply-filters-btn');
     const mainTitle = document.getElementById('papers-main-title');
+
     if (!papersListContainer || !noPapersMessage || !filterForm || !applyFiltersBtn || !mainTitle) {
         console.warn("Papers page dynamic elements missing. Aborting setup.");
         if(papersListContainer) papersListContainer.innerHTML = '<p class="no-results-message">Error loading paper list components.</p>';
@@ -709,6 +748,8 @@ function setupPapersPage_Dynamic() {
     const urlParams = new URLSearchParams(window.location.search);
     const subjectFilterFromUrl = urlParams.get('subject');
     const paperStatuses = getUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, {});
+    console.log("[PapersPage] Loaded paperStatuses:", JSON.parse(JSON.stringify(paperStatuses))); // Log a deep copy for inspection
+
     function createPaperCard(paper) {
         if (!paper?.id) return null;
         const link = document.createElement('a');
@@ -717,7 +758,7 @@ function setupPapersPage_Dynamic() {
         link.className = `paper-card ${statusInfo.status === 'done' ? 'paper-card--done' : 'paper-card--not-done'}`;
         link.dataset.paperId = paper.id; link.dataset.subject = paper.subjectId || 'unknown'; link.dataset.year = paper.year || 'unknown'; link.dataset.paperNumber = paper.paperNumber || 'unknown'; link.dataset.status = statusInfo.status;
         if (statusInfo.status === 'done' && statusInfo.linkAttemptId) {
-            link.href = `attempt.html?attemptId=${encodeURIComponent(statusInfo.linkAttemptId)}&paperId=${encodeURIComponent(paper.id)}`;
+            link.href = `result.html?attemptId=${encodeURIComponent(statusInfo.linkAttemptId)}&paperId=${encodeURIComponent(paper.id)}`; // Link to result page
         } else {
             link.href = `test.html?paperId=${encodeURIComponent(paper.id)}`;
         }
@@ -776,7 +817,7 @@ function setupPapersPage_Dynamic() {
         mainTitle.textContent = `All Past Papers`;
     }
     applyFiltersBtn.addEventListener('click', applyFiltersAndRender);
-    applyFiltersAndRender();
+    applyFiltersAndRender(); // Initial render
 }
 
 // ===== ATTEMPT PAGE LOGIC =====
@@ -814,11 +855,15 @@ function setupAttemptContentViewer() {
     if (validAttemptId) {
         const attemptDataKey = getUserStorageKey(`${BASE_STORAGE_KEYS.ATTEMPT_DETAILS_PREFIX}${attemptId}`);
         attemptData = getStorageItem(attemptDataKey, {});
+        if (!attemptData || Object.keys(attemptData).length === 0) {
+            console.warn(`No attempt data found for attemptId: ${attemptId} and key: ${attemptDataKey}`);
+            displayUserMessage("Could not load attempt details.", "error");
+        }
         if (!validPaperIdFromUrl && attemptData.paperId) {
             actualPaperIdForContent = attemptData.paperId;
         }
     }
-    if (!actualPaperIdForContent && validAttemptId) {
+    if (!actualPaperIdForContent && validAttemptId) { // Fallback if paperId not in URL and not in attemptData directly
         const parts = attemptId.split('_');
         if (parts.length >= 2 && parts[1].includes('-')) actualPaperIdForContent = parts[1];
     }
@@ -843,12 +888,14 @@ function setupAttemptContentViewer() {
         }
     };
 
-    if (validAttemptId) {
+    if (validAttemptId && attemptData && Object.keys(attemptData).length > 0) {
         durationValueElement.textContent = attemptData.duration ? formatTime(attemptData.duration) : '--';
         gradeValueElement.textContent = attemptData.grade || '--';
         rawScoreValueElement.textContent = (attemptData.score !== undefined && attemptData.totalMarks !== undefined) ? `${attemptData.score} / ${attemptData.totalMarks}` : '-- / --';
     } else {
         durationValueElement.textContent = '--:--:--'; gradeValueElement.textContent = '--'; rawScoreValueElement.textContent = '-- / --';
+        if(validAttemptId) displayUserMessage("Attempt data could not be fully loaded.", "warning");
+        else displayUserMessage("Invalid attempt ID specified.", "error");
     }
 
     const views = [paperV, feedV, outV]; const buttons = [paperB, feedB, outB];
@@ -926,13 +973,16 @@ async function setupTestPage() {
     const fileUploadInput = document.getElementById('file-upload-input');
     const fileUploadFilename = document.getElementById('file-upload-filename');
     const paperViewerScroll = document.getElementById('paper-viewer-scroll');
+
     if (!timerDisplay || !timerButton || !confirmModal || !confirmSubmitBtn || !modalCloseElements || !paperCodeHeading || !answerTextarea || !fileUploadInput || !fileUploadFilename || !paperViewerScroll) {
         console.warn("Test page elements missing. Aborting setup.");
         if (paperCodeHeading) paperCodeHeading.textContent = "Error Loading Test";
         if (timerButton) { timerButton.disabled = true; timerButton.textContent = "Error"; } return;
     }
+
     const { paperId, validPaperId } = getPaperInfoFromUrl();
     let displayCode = "Unknown Paper"; let currentPaperData = null;
+
     if (validPaperId) {
         currentPaperData = ALL_PAPER_DATA_SOURCE.find(p => p.id === paperId);
         if (currentPaperData) {
@@ -954,6 +1004,7 @@ async function setupTestPage() {
          paperViewerScroll.innerHTML = `<p style="padding: 1rem; text-align:center;"><i>No Paper ID provided.</i></p>`;
          timerButton.disabled = true; timerButton.textContent = "Invalid Paper"; return;
     }
+
     let timerInterval = null; let secondsElapsed = 0; let isTimerRunning = false; let previouslyFocusedElementTest = null;
     const updateDisplay = () => { if(timerDisplay) timerDisplay.textContent = formatTime(secondsElapsed); };
     const startTimer = () => {
@@ -971,7 +1022,9 @@ async function setupTestPage() {
         previouslyFocusedElementTest = document.activeElement; openModal(confirmModal, confirmSubmitBtn);
     };
     const closeTestModalInstance = () => closeModal(confirmModal, previouslyFocusedElementTest);
+
     timerButton.addEventListener('click', () => { const action = timerButton.dataset.action; if (action === 'start') startTimer(); else if (action === 'submit') openTestModalInstance(); });
+
     fileUploadInput.addEventListener('change', () => {
         const file = fileUploadInput.files[0];
         if (file) {
@@ -982,63 +1035,111 @@ async function setupTestPage() {
             else { answerTextarea.disabled = true; answerTextarea.placeholder = "Start the exam to type or upload."; }
         }
     });
+
     confirmSubmitBtn.addEventListener('click', async () => {
         const currentUsername = getCurrentUsername();
         if (!currentUsername || !validPaperId || !currentPaperData) {
              displayUserMessage("Submission error: User/Paper invalid.", "error"); closeTestModalInstance(); return;
         }
         confirmSubmitBtn.disabled = true; confirmSubmitBtn.textContent = "Submitting...";
-        let processingMessageTimer = setTimeout(() => displayUserMessage("Still processing AI feedback...", "info", 15000), 10000);
+        let processingMessageTimer = setTimeout(() => displayUserMessage("Still processing AI feedback...", "info", 15000), 10000); // Long timeout for AI
         let userAnswer = answerTextarea.value.trim(); const uploadedFile = fileUploadInput.files[0];
         let ocrAttempted = false;
+
         if (uploadedFile && !userAnswer) {
             ocrAttempted = true; displayUserMessage("Processing uploaded file with OCR...", "info", 7000);
             try {
                 userAnswer = await getOcrTextFromImageOrPdf(uploadedFile);
-                if (!userAnswer) {
-                    displayUserMessage("OCR failed. Type answer or try different file.", "warning");
-                    answerTextarea.disabled = false; answerTextarea.placeholder = "OCR failed. Type answer."; answerTextarea.focus();
+                if (!userAnswer) { // OCR might return empty string if no text found
+                    displayUserMessage("OCR complete but no text extracted. Please type answer or try a different file.", "warning");
+                    answerTextarea.disabled = false; answerTextarea.placeholder = "OCR yielded no text. Type answer."; answerTextarea.focus();
                     confirmSubmitBtn.disabled = false; confirmSubmitBtn.textContent = "Confirm Submit"; clearTimeout(processingMessageTimer); return;
                 }
                 displayUserMessage("File processed with OCR.", "success");
-            } catch (ocrError) {
-                displayUserMessage(`OCR Error: ${ocrError}. Type answer.`, "error");
+            } catch (ocrError) { // This catches network errors or backend rejections
+                displayUserMessage(`OCR Error: ${ocrError}. Please type your answer.`, "error");
                 answerTextarea.disabled = false; answerTextarea.placeholder = "OCR failed. Type answer."; answerTextarea.focus();
                 confirmSubmitBtn.disabled = false; confirmSubmitBtn.textContent = "Confirm Submit"; clearTimeout(processingMessageTimer); return;
             }
         }
+
         if (!userAnswer) {
-            displayUserMessage("No answer provided.", "warning");
+            displayUserMessage("No answer provided. Please type or upload an answer.", "warning");
             if (ocrAttempted) { answerTextarea.disabled = false; answerTextarea.placeholder = "Type answer."; answerTextarea.focus(); }
+            else { answerTextarea.focus(); }
             confirmSubmitBtn.disabled = false; confirmSubmitBtn.textContent = "Confirm Submit"; clearTimeout(processingMessageTimer); return;
         }
+
         if (isTimerRunning) stopTimer();
-        clearTimeout(processingMessageTimer); displayUserMessage("Getting AI feedback...", "info", 25000);
+        clearTimeout(processingMessageTimer); // Clear OCR/general processing timer
+        displayUserMessage("Getting AI feedback... This may take a very long moment.", "info", 30000); // New timer for AI
+
         let aiResult;
-        try { aiResult = await getAiFeedbackAndGrade(currentPaperData, userAnswer, currentPaperData.totalMarks); }
-        catch (aiErrorReceived) { aiResult = aiErrorReceived; displayUserMessage("AI feedback issue. Result may be incomplete.", "warning");}
-        const timestamp = Date.now(); const sanitizedUsernamePart = currentUsername.replace(/[^a-zA-Z0-9_-]/g, '').substring(0,8);
+        try {
+            aiResult = await getAiFeedbackAndGrade(currentPaperData, userAnswer, currentPaperData.totalMarks);
+        } catch (aiErrorReceived) { // This catch is more for unexpected errors in the promise chain itself. getAiFeedbackAndGrade should ideally always resolve.
+            console.error("Unexpected error during AI feedback call:", aiErrorReceived);
+            aiResult = { score: 0, totalMarks: currentPaperData.totalMarks, grade: "U", feedback: "AI processing encountered an unexpected client-side error.", outline: "Outline unavailable.", highlight_references: [], sectionScores: {} };
+            displayUserMessage("AI feedback issue (client-side). Result may be incomplete.", "warning");
+        }
+
+        const timestamp = Date.now();
+        const sanitizedUsernamePart = currentUsername.replace(/[^a-zA-Z0-9_-]/g, '').substring(0,8);
         const newAttemptId = `${sanitizedUsernamePart}_${paperId.replace(/[^a-zA-Z0-9]/g, "")}_${timestamp}`;
+
         const attemptDataToSave = {
-            paperId: paperId, timestamp: timestamp, duration: secondsElapsed, answerText: userAnswer.substring(0, 20000),
-            fileName: uploadedFile ? uploadedFile.name : null, grade: aiResult.grade || "N/A",
-            score: aiResult.score === undefined ? null : aiResult.score, totalMarks: aiResult.totalMarks === undefined ? (currentPaperData.totalMarks || null) : aiResult.totalMarks,
-            feedback: aiResult.feedback || "Feedback not generated.", outline: aiResult.outline || "Outline not generated.", highlight_references: aiResult.highlight_references || [],
+            paperId: paperId, timestamp: timestamp, duration: secondsElapsed, answerText: userAnswer.substring(0, 20000), // Truncate for storage
+            fileName: uploadedFile ? uploadedFile.name : null,
+            grade: aiResult.grade || "N/A", // Ensure these properties exist
+            score: aiResult.score === undefined ? null : aiResult.score,
+            totalMarks: aiResult.totalMarks === undefined ? (currentPaperData.totalMarks || null) : aiResult.totalMarks,
+            feedback: aiResult.feedback || "Feedback not generated.",
+            outline: aiResult.outline || "Outline not generated.",
+            highlight_references: aiResult.highlight_references || [],
             sectionScores: aiResult.sectionScores || {}
         };
+
         const attemptDataKey = getUserStorageKey(`${BASE_STORAGE_KEYS.ATTEMPT_DETAILS_PREFIX}${newAttemptId}`);
         const savedAttempt = setStorageItem(attemptDataKey, attemptDataToSave);
-        const userStatuses = getUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, {});
-        userStatuses[paperId] = { status: 'done', linkAttemptId: newAttemptId }; setUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, userStatuses);
-        confirmSubmitBtn.disabled = false; confirmSubmitBtn.textContent = "Confirm Submit"; closeTestModalInstance();
+
+        let savedPaperStatus = false;
         if (savedAttempt) {
-            displayUserMessage("Attempt submitted!", "success");
+            const userStatuses = getUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, {});
+            console.log(`[TestPage] Current paperStatuses before update for paper ${paperId}:`, JSON.parse(JSON.stringify(userStatuses)));
+            userStatuses[paperId] = { status: 'done', linkAttemptId: newAttemptId };
+            console.log(`[TestPage] paperStatuses to be saved for paper ${paperId}:`, JSON.parse(JSON.stringify(userStatuses)));
+            savedPaperStatus = setUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, userStatuses);
+            if(savedPaperStatus) {
+                console.log(`[TestPage] Successfully updated paperStatus for ${paperId} to 'done'.`);
+            } else {
+                console.error(`[TestPage] FAILED to update paperStatus for ${paperId}.`);
+                displayUserMessage("Attempt saved, but paper status update failed. Progress might not reflect.", "warning");
+            }
+        } else {
+            console.error(`[TestPage] FAILED to save attempt details for attemptId ${newAttemptId}.`);
+        }
+
+        confirmSubmitBtn.disabled = false; confirmSubmitBtn.textContent = "Confirm Submit";
+        closeTestModalInstance();
+
+        if (savedAttempt && savedPaperStatus) {
+            displayUserMessage("Attempt submitted successfully!", "success");
             setTimeout(() => window.location.href = `result.html?attemptId=${encodeURIComponent(newAttemptId)}&paperId=${encodeURIComponent(paperId)}`, 1000);
+        } else if (savedAttempt && !savedPaperStatus) {
+            // Already displayed a warning, but maybe a more prominent one or different redirect.
+            // For now, still redirect to results page, but progress on dashboard/papers might be stale.
+             displayUserMessage("Attempt saved, but status update failed. Redirecting to results.", "warning", 6000);
+            setTimeout(() => window.location.href = `result.html?attemptId=${encodeURIComponent(newAttemptId)}&paperId=${encodeURIComponent(paperId)}`, 1000);
+        } else {
+            displayUserMessage("Failed to save attempt. Please try again.", "error");
         }
     });
+
     if(modalCloseElements) modalCloseElements.forEach(el => el.addEventListener('click', closeTestModalInstance));
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && confirmModal?.classList.contains('is-visible')) closeTestModalInstance(); });
-    updateDisplay(); answerTextarea.disabled = true; fileUploadInput.disabled = true; answerTextarea.placeholder = "Start exam to type or upload.";
+
+    updateDisplay(); // Initial timer display
+    answerTextarea.disabled = true; fileUploadInput.disabled = true; answerTextarea.placeholder = "Start exam to type or upload.";
 }
 
 // ===== RESULT PAGE LOGIC =====
@@ -1057,35 +1158,50 @@ function setupResultPage() {
     const sectionCElement = document.getElementById('result-section-c');
     const downloadFeedbackBtn = document.getElementById('download-feedback-btn');
     const downloadOutlineBtn = document.getElementById('download-outline-btn');
+
     if (!deleteButton || !deleteModal || !confirmDeleteBtn || !modalCloseElements || !paperCodeHeading || !gradeElement || !durationElement || !rawScoreElement || !downloadFeedbackBtn || !downloadOutlineBtn) {
         console.warn("Result page elements missing."); if (paperCodeHeading) paperCodeHeading.textContent = "Error Loading Result"; return;
     }
+
     const { attemptId, paperId: paperIdFromUrl, validAttemptId, validPaperId: validPaperIdFromUrl } = getPaperInfoFromUrl();
     let displayCode = "Result"; let actualPaperIdForResult = paperIdFromUrl; let attemptData = {};
-    if (validAttemptId && !validPaperIdFromUrl) {
-        const attemptDataKeyForPaperId = getUserStorageKey(`${BASE_STORAGE_KEYS.ATTEMPT_DETAILS_PREFIX}${attemptId}`);
-        const tempAttemptData = getStorageItem(attemptDataKeyForPaperId, {});
-        if (tempAttemptData.paperId) actualPaperIdForResult = tempAttemptData.paperId;
-        else { const parts = attemptId.split('_'); if (parts.length >= 2 && parts[1].includes('-')) actualPaperIdForResult = parts[1];}
-    }
-    displayCode = actualPaperIdForResult ? formatPaperCode(actualPaperIdForResult) : (validAttemptId ? attemptId : "Result");
-    paperCodeHeading.textContent = displayCode; document.title = `${displayCode} - Result - PaperBuddy`;
+
     if (validAttemptId) {
         const attemptDataKey = getUserStorageKey(`${BASE_STORAGE_KEYS.ATTEMPT_DETAILS_PREFIX}${attemptId}`);
         attemptData = getStorageItem(attemptDataKey, {});
+        if (!attemptData || Object.keys(attemptData).length === 0) {
+            console.warn(`[ResultPage] No attempt data found for attemptId: ${attemptId} and key: ${attemptDataKey}`);
+            displayUserMessage("Could not load result details.", "error");
+        } else {
+            if (!validPaperIdFromUrl && attemptData.paperId) {
+                actualPaperIdForResult = attemptData.paperId;
+            } else if (!actualPaperIdForResult) { // Fallback if paperId not in URL and not in attemptData
+                 const parts = attemptId.split('_');
+                 if (parts.length >= 2 && parts[1].includes('-')) actualPaperIdForResult = parts[1];
+            }
+        }
+    } else {
+         displayUserMessage("Could not load result: Invalid attempt ID provided in URL.", "error");
+    }
+
+    displayCode = actualPaperIdForResult ? formatPaperCode(actualPaperIdForResult) : (validAttemptId ? attemptId : "Result");
+    paperCodeHeading.textContent = displayCode; document.title = `${displayCode} - Result - PaperBuddy`;
+
+    if (validAttemptId && attemptData && Object.keys(attemptData).length > 0) {
         gradeElement.textContent = attemptData.grade || '--';
         durationElement.textContent = attemptData.duration ? formatTime(attemptData.duration) : '--:--:--';
         rawScoreElement.textContent = (attemptData.score !== undefined && attemptData.totalMarks !== undefined) ? `${attemptData.score} / ${attemptData.totalMarks}` : '-- / --';
         const sections = ['sectionA', 'sectionB', 'sectionC'];
         const sectionElements = [sectionAElement, sectionBElement, sectionCElement];
         const paperTotalMarks = attemptData.totalMarks || 0;
+
         sections.forEach((secKey, index) => {
             if (sectionElements[index]) {
                 const sectionData = attemptData.sectionScores ? attemptData.sectionScores[secKey] : null;
                 if (sectionData && sectionData.score !== undefined && sectionData.max !== undefined) {
                     sectionElements[index].textContent = `${sectionData.score} / ${sectionData.max}`;
                 } else {
-                    const approxMax = paperTotalMarks > 0 ? Math.floor(paperTotalMarks / sections.length) : '--';
+                    const approxMax = paperTotalMarks > 0 ? Math.floor(paperTotalMarks / sections.length) : '--'; // Simple approximation
                     sectionElements[index].textContent = `-- / ${approxMax}`;
                 }
             }
@@ -1093,10 +1209,11 @@ function setupResultPage() {
     } else {
         gradeElement.textContent = '--'; durationElement.textContent = '--:--:--'; rawScoreElement.textContent = '-- / --';
         if (sectionAElement) sectionAElement.textContent = "-- / --"; if (sectionBElement) sectionBElement.textContent = "-- / --"; if (sectionCElement) sectionCElement.textContent = "-- / --";
-        displayUserMessage("Could not load result: Invalid attempt ID.", "error");
     }
+
     if (downloadFeedbackBtn) {
         if (attemptData.feedback) {
+            downloadFeedbackBtn.disabled = false;
             downloadFeedbackBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 if (typeof jsPDF !== 'undefined') {
@@ -1117,8 +1234,10 @@ function setupResultPage() {
             });
         } else { downloadFeedbackBtn.disabled = true; downloadFeedbackBtn.title = "No feedback available."; }
     }
+
     if (downloadOutlineBtn) {
         if (attemptData.outline) {
+            downloadOutlineBtn.disabled = false;
             downloadOutlineBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 if (typeof jsPDF !== 'undefined') {
@@ -1136,30 +1255,61 @@ function setupResultPage() {
             });
         } else { downloadOutlineBtn.disabled = true; downloadOutlineBtn.title = "No outline available."; }
     }
+
     let previouslyFocusedElementResult = null;
     const openDeleteModalInstance = () => { previouslyFocusedElementResult = document.activeElement; openModal(deleteModal, confirmDeleteBtn); };
     const closeDeleteModalInstance = () => closeModal(deleteModal, previouslyFocusedElementResult);
+
     deleteButton.addEventListener('click', () => { if (validAttemptId) openDeleteModalInstance(); else displayUserMessage("Cannot delete: Invalid attempt ID.", "error"); });
+
     confirmDeleteBtn.addEventListener('click', () => {
-         if (!validAttemptId) { displayUserMessage("Error: Cannot delete attempt.", "error"); closeDeleteModalInstance(); return; }
+         if (!validAttemptId) { displayUserMessage("Error: Cannot delete attempt. Invalid ID.", "error"); closeDeleteModalInstance(); return; }
          const currentUsername = getCurrentUsername();
-         if (!currentUsername) { displayUserMessage("Error: Not logged in.", "error"); closeDeleteModalInstance(); window.location.href = 'index.html'; return; }
+         if (!currentUsername) { displayUserMessage("Error: Not logged in. Cannot delete.", "error"); closeDeleteModalInstance(); window.location.href = 'index.html'; return; }
+
          const attemptDataKeyToDelete = getUserStorageKey(`${BASE_STORAGE_KEYS.ATTEMPT_DETAILS_PREFIX}${attemptId}`);
-         localStorage.removeItem(attemptDataKeyToDelete);
+         if (!attemptDataKeyToDelete) {
+            displayUserMessage("Error: Could not generate storage key for deletion.", "error"); closeDeleteModalInstance(); return;
+         }
+         localStorage.removeItem(attemptDataKeyToDelete); // Directly remove as it's not versioned or complex
+         console.log(`[ResultPage] Deleted attempt detail from localStorage key: ${attemptDataKeyToDelete}`);
+
          const paperIdForStatusUpdate = attemptData.paperId || actualPaperIdForResult;
+         let statusUpdated = false;
          if (paperIdForStatusUpdate && paperIdForStatusUpdate !== 'unknown-paper') {
              const userStatuses = getUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, {});
+             console.log(`[ResultPage] Current paperStatuses before delete update for paper ${paperIdForStatusUpdate}:`, JSON.parse(JSON.stringify(userStatuses)));
              if (userStatuses.hasOwnProperty(paperIdForStatusUpdate) && userStatuses[paperIdForStatusUpdate]?.linkAttemptId === attemptId) {
                   userStatuses[paperIdForStatusUpdate] = { status: 'not_done', linkAttemptId: null };
-                  setUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, userStatuses);
+                  console.log(`[ResultPage] paperStatuses to be saved after delete for paper ${paperIdForStatusUpdate}:`, JSON.parse(JSON.stringify(userStatuses)));
+                  if (setUserData(BASE_STORAGE_KEYS.PAPER_STATUSES, userStatuses)) {
+                      statusUpdated = true;
+                      console.log(`[ResultPage] Successfully updated paperStatus for ${paperIdForStatusUpdate} to 'not_done' after deletion.`);
+                  } else {
+                      console.error(`[ResultPage] FAILED to update paperStatus for ${paperIdForStatusUpdate} after deletion.`);
+                      displayUserMessage("Attempt data deleted, but paper status update failed.", "warning");
+                  }
+             } else {
+                console.warn(`[ResultPage] Paper status for ${paperIdForStatusUpdate} did not need update or linkAttemptId did not match.`);
+                statusUpdated = true; // Effectively, no update was needed, so it's not a failure state for status.
              }
+         } else {
+            console.warn("[ResultPage] No valid paperId found to update status after deletion.");
+            statusUpdated = true; // No paper ID means no status to update.
          }
-         closeDeleteModalInstance(); displayUserMessage("Attempt deleted. Redirecting...", "success");
+
+         closeDeleteModalInstance();
+         displayUserMessage("Attempt deleted. Redirecting...", "success");
           setTimeout(() => {
                const subjectOfDeletedPaper = ALL_PAPER_DATA_SOURCE.find(p => p.id === paperIdForStatusUpdate)?.subjectId;
-               window.location.href = subjectOfDeletedPaper ? `papers.html?subject=${encodeURIComponent(subjectOfDeletedPaper)}` : 'dashboard.html';
+               if (subjectOfDeletedPaper) {
+                    window.location.href = `papers.html?subject=${encodeURIComponent(subjectOfDeletedPaper)}`;
+               } else {
+                    window.location.href = 'dashboard.html';
+               }
           }, 1500);
     });
+
     if(modalCloseElements) modalCloseElements.forEach(el => el.addEventListener('click', closeDeleteModalInstance));
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && deleteModal?.classList.contains('is-visible')) closeDeleteModalInstance(); });
 }
